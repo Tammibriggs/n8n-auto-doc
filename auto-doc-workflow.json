@@ -1,0 +1,819 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.commits }}",
+        "options": {
+          "systemMessage": "You are an AI agent that detects outdated documentation caused by recent code commits.\n\nYour input is a GitHub commit containing one or more modified files. Each file includes a `patch` (diff) showing changes. Your job is to identify terms that, if still mentioned in documentation, could signal that the documentation is outdated due to the commit.\n\n## Instructions:\n1. Focus on **modified**, **renamed**, or **removed** methods, classes, variables, modules, and semantic concepts.\n2. **Ignore purely added content** unless it **replaces** or **deprecates** something.\n3. Return a single comma-separated query (not a list) of relevant search terms.\n\nYou will then use these terms to search the \"doc\" Algolia index. First, list the available MCP tools. Next, choose the appropriate search tool. Then, invoke the selected tool using the correct schema format.\n\nWhen searching, use only two (2) terms at a time per query. If the comma-separated string contains more than two terms, split them into groups of two, and call the search tool multiple times, each with no more than three terms.\n\nReturn a final result containing a list of document file paths that may be outdated.\n\n---\n### ✅ Example 1:\n\n#### Input Patch Snippet:\n```diff\n- sdk.setBotPersona('Ava', 'friendly');\n+ sdk.setBotPersona('Zeta', 'professional');\n- setBotPersona(name, tone)\n+ configurePersona(name, style)\n- this.botName = name;\n+ this.botTitle = name;\n```\n\n### Output (search terms):\n\n```json\n\"sdk.setBotPersona('Ava', 'friendly');, setBotPersona(name, tone), set Bot Persona name tone, botName, configurePersona(name, style), configure Persona name style, botTitle\"\n```\n\n### ✅ Example 2:\n\n#### Input Patch Snippet:\n```diff\n- import { sendMessage } from './utils/chat';\n+ import { dispatchMessage } from './utils/chat-engine';\n\n- function sendMessageToUser(userId, content) {\n-   return sendMessage(userId, content);\n- }\n\n+ function dispatchMessageToUser(userId, payload) {\n+   return dispatchMessage(userId, payload);\n+ }\n\n- const MAX_RETRIES = 3;\n+ const MAX_ATTEMPTS = 5;\n```\n\n### Output (search terms):\n\n```json\n\"sendMessageToUser(userId, content), send Message To User userId content, sendMessage, dispatchMessageToUser(userId, payload), dispatch Message To User userId payload, dispatchMessage, MAX_RETRIES, MAX_ATTEMPTS\"\n```\n\n### ✅ Example 3:\n\n#### Input Patch Snippet:\n```diff\n- export function validateUserInput(input: string): boolean {\n-   return input.length > 0 && input.length < 100;\n- }\n\n+ export function checkUserInput(value: string): boolean {\n+   return value.trim().length > 0 && value.length < 150;\n+ }\n\n- const DEFAULT_INPUT_LIMIT = 100;\n+ const MAX_INPUT_LENGTH = 150;\n```\n\n### Output (search terms):\n\n```json\n\"validateUserInput(input: string), validate User Input input string, checkUserInput(value: string), check User Input value string, DEFAULT_INPUT_LIMIT, MAX_INPUT_LENGTH\"\n```\n\n## Final Output:\nReturn the search result as a single comma-separated string of matching documentation file paths, like:\n\n\"docs/api/chat-connection.mdx, docs/bots/personality-guide.mdx\"\n\n**Note**: Ensure the final output is a single comma-separated string of file paths."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.1,
+      "position": [
+        304,
+        528
+      ],
+      "id": "dda81637-14b6-4d8e-aea4-ff66ffc48dd6",
+      "name": "AI Agent1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        304,
+        736
+      ],
+      "id": "da7af753-9d31-466e-9798-86304cef409a",
+      "name": "Google Gemini Chat Model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "gGDmqpsjiVbpOtXT",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $json.author.name }}/{{ $('Webhook2').item.json.body.repository.name }}/commits/{{ $json.id }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -16,
+        528
+      ],
+      "id": "f8aa3a6f-2a01-410b-accb-17c2930e95b8",
+      "name": "Fetch Commits1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nconst VALID_PATH = 'sdk/'\nconst filteredCommits = $input.first().json.body.commits.filter(commit => {\n  const commitFiles = [...commit.modified, ...commit.removed, ...commit.added]\n  const isValidCommit = commitFiles.some(item => item.startsWith(VALID_PATH))\n  if (!isValidCommit) return false\n  commit.files = commitFiles\n  return commit\n})\n\nreturn filteredCommits\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        704
+      ],
+      "id": "ddae2244-8ea0-451d-a6c9-9cbb7ad2dd3d",
+      "name": "Filter commits1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const VALID_PATH = 'sdk/'\n// array of arrays\nconst validCommitFiles = $input.all().map(commit => {\n  return commit.json.files.filter(item => item.filename.startsWith(VALID_PATH)).map(item => ({...item, commitSha: commit.json.sha }))\n})\n\nconst result = Object.fromEntries(\n  validCommitFiles.map((sublist, i) => [`commit${i + 1}`, sublist])\n);\n\nreturn {commits: result}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        720
+      ],
+      "id": "a61f301d-1f46-4ef1-8cde-13aa497767a8",
+      "name": "Add chatInput for Agent1"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Use this to execute Algolia tools.",
+        "operation": "executeTool",
+        "toolName": "={{ $fromAI(\"tool\", \"The tool to be selected\") }}",
+        "toolParameters": "={{ $fromAI('Tool_Parameters', `A Javascript object to be used to supply the neccessary parameters for the tool call`) }}"
+      },
+      "type": "n8n-nodes-mcp.mcpClientTool",
+      "typeVersion": 1,
+      "position": [
+        608,
+        736
+      ],
+      "id": "02b69a06-13d2-4d19-99fb-75ee6fcb7667",
+      "name": "Execute MCP tool1",
+      "credentials": {
+        "mcpClientApi": {
+          "id": "bcBbxeyoDViwyOly",
+          "name": "Algolia"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Use this to list Algolia tools. It will help to know the available tools and valid parameters to be passed to them."
+      },
+      "type": "n8n-nodes-mcp.mcpClientTool",
+      "typeVersion": 1,
+      "position": [
+        464,
+        736
+      ],
+      "id": "f0d7392c-8200-4226-b2cf-61faf44ffc60",
+      "name": "List Algolia tools1",
+      "credentials": {
+        "mcpClientApi": {
+          "id": "bcBbxeyoDViwyOly",
+          "name": "Algolia"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "owner": {
+          "__rl": true,
+          "value": "=Tammibriggs",
+          "mode": "name"
+        },
+        "repository": {
+          "__rl": true,
+          "value": "=algolia-chat-me",
+          "mode": "name"
+        },
+        "filePath": "={{ $json.filePath }}",
+        "asBinaryProperty": false,
+        "additionalParameters": {}
+      },
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1.1,
+      "position": [
+        944,
+        528
+      ],
+      "id": "0d3df227-a6e0-45cf-b4db-a32540f37621",
+      "name": "Get a file1",
+      "webhookId": "c28f3cc3-53db-4ce8-9787-5143dc8f9c98",
+      "credentials": {
+        "githubApi": {
+          "id": "0iUGgITF1rFk4NeZ",
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.first().json.output.split(',').map(item => ({filePath: item.trim()}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        528
+      ],
+      "id": "756c9972-dcfd-4848-b874-0ec167baf776",
+      "name": "Format agent output1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        800,
+        720
+      ],
+      "id": "a327b54d-3127-477e-a68f-9604fdc3b363",
+      "name": "Loop Over Items3"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn {path:$input.first().json.path,  content: Buffer.from($input.first().json.content , \"base64\").toString(\"utf-8\")};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1088,
+        720
+      ],
+      "id": "b2e4a22c-c901-4b93-9c9e-6c2c4c41700f",
+      "name": "Decode file content1"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "15ca4146-14b4-4278-8cc8-d194b96ff691",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        544
+      ],
+      "id": "96111f15-de93-407e-a3fa-7f218c05ccf9",
+      "name": "Webhook2",
+      "webhookId": "15ca4146-14b4-4278-8cc8-d194b96ff691"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=### Commits (in order):\n\n{{ $('Add chatInput for Agent1').item.json.commits.toJsonString() }}\n\n---\n\n### Current Documentation File:\n\n{{ $json.content }}\n\n---\n\n### Output:\nRespond with the full updated documentation content.",
+        "options": {
+          "systemMessage": "You are a documentation assistant.\n\nBelow are multiple code commits from a single push event. These commits may contain related or incremental changes that affect the same part of the system.\n\nYou are also given the current content of a documentation file.\n\n---\n\nYour task:\n1. Carefully review the commits as a whole.\n2. Identify what meaningful behavior or API changes they introduce in total.\n3. Based on those changes, examine the documentation.\n4. If any part of the documentation is now outdated, unclear, or missing important details, update it **minimally** to reflect the new code behavior.\n5. Avoid unnecessary changes. Your goal is to ensure the documentation is up-to-date — not to rephrase or reformat it unless needed.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.1,
+      "position": [
+        1264,
+        528
+      ],
+      "id": "10f4ace4-5907-4dac-82a0-1a76e1cb31a8",
+      "name": "AI Agent2"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-pro",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1264,
+        736
+      ],
+      "id": "8210faab-3260-4340-83e0-d2b89d7b0a34",
+      "name": "Google Gemini Chat Model2",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "gGDmqpsjiVbpOtXT",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "owner": {
+          "__rl": true,
+          "value": "Tammibriggs",
+          "mode": "name"
+        },
+        "repository": {
+          "__rl": true,
+          "value": "=algolia-chat-me",
+          "mode": "name"
+        },
+        "title": "Outdated documentation",
+        "body": "=The following documentation files might be outdated due to recent code changes and have AI-suggested updates available:\n{{ \n  $('Loop Over Items3').all().map(i => {\n    const file = i.json.content;\n    return `- [${file.name}](${file.html_url})`;\n  }).join('\\n') \n}}\n\nReview the AI-suggested documentation updates in the following feature branches:\n{{ \n   $('Loop Over Items3').all().map(i => {\n    const branch = i.json.content.html_url.split('/blob/')[1].split('/')[0];\n    return `- [${branch}](https://github.com/Tammibriggs/algolia-chat-me/tree/${branch})`;\n  }).join('\\n') \n}}",
+        "labels": [],
+        "assignees": []
+      },
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1.1,
+      "position": [
+        1856,
+        720
+      ],
+      "id": "e02fe33b-8549-4d79-8319-07c78d631117",
+      "name": "Create an issue",
+      "webhookId": "1ae5c226-4888-4ce6-99c3-b082aabbca4c",
+      "credentials": {
+        "githubApi": {
+          "id": "0iUGgITF1rFk4NeZ",
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/Tammibriggs/algolia-chat-me/git/refs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"ref\": \"refs/heads/ai-doc-update-{{ $('Get a file1').item.json.name.split('.').first() }}-{{ $now.toMillis() }}\",\n  \"sha\": \"{{  Object.entries($('Add chatInput for Agent1').item.json.commits)[Object.entries($('Add chatInput for Agent1').item.json.commits).length - 1][1][0].commitSha  }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1648,
+        528
+      ],
+      "id": "0f7ac06c-079f-4380-b368-a28bda71c312",
+      "name": "Create GitHUb branch",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "J9LYP7EzZqGEoTec",
+          "name": "GitHub Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d3f598b6-2812-4685-9ee7-a0722481245d",
+              "leftValue": "={{ $input.first().json.body?.commits }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -320,
+        544
+      ],
+      "id": "4e7c6436-6d23-4d9f-acef-c0aad1f47d10",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "edit",
+        "owner": {
+          "__rl": true,
+          "value": "Tammibriggs",
+          "mode": "name"
+        },
+        "repository": {
+          "__rl": true,
+          "value": "algolia-chat-me",
+          "mode": "name"
+        },
+        "filePath": "={{ $('Decode file content1').item.json.path }}",
+        "fileContent": "={{ $('AI Agent2').item.json.output }}",
+        "commitMessage": "ai suggested update for oudated doc",
+        "additionalParameters": {
+          "branch": {
+            "branch": "={{ $json.ref.split('/').pop() }}"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        528
+      ],
+      "id": "f8b421c7-665c-4424-92a3-36bcdcdcbb64",
+      "name": "Commit file changes",
+      "webhookId": "f0c37f1d-20fe-4917-af3e-0b87cbf59e74",
+      "credentials": {
+        "githubApi": {
+          "id": "0iUGgITF1rFk4NeZ",
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return {};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        720
+      ],
+      "id": "2eb0e684-5cc7-4c1d-b30f-1f4c40429995",
+      "name": "Make subsequent node run only once"
+    }
+  ],
+  "connections": {
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "Format agent output1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Commits1": {
+      "main": [
+        [
+          {
+            "node": "Add chatInput for Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter commits1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Commits1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add chatInput for Agent1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute MCP tool1": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Algolia tools1": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a file1": {
+      "main": [
+        [
+          {
+            "node": "Decode file content1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format agent output1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items3": {
+      "main": [
+        [
+          {
+            "node": "Make subsequent node run only once",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get a file1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decode file content1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook2": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent2": {
+      "main": [
+        [
+          {
+            "node": "Create GitHUb branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create GitHUb branch": {
+      "main": [
+        [
+          {
+            "node": "Commit file changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Filter commits1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit file changes": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make subsequent node run only once": {
+      "main": [
+        [
+          {
+            "node": "Create an issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Webhook2": [
+      {
+        "headers": {
+          "host": "15458c7a9735.ngrok-free.app",
+          "user-agent": "GitHub-Hookshot/65d1c54",
+          "content-length": "7828",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-forwarded-for": "140.82.115.61",
+          "x-forwarded-host": "15458c7a9735.ngrok-free.app",
+          "x-forwarded-proto": "https",
+          "x-github-delivery": "c1934e1e-6708-11f0-8b88-1b42cb928d58",
+          "x-github-event": "push",
+          "x-github-hook-id": "559512589",
+          "x-github-hook-installation-target-id": "1020801025",
+          "x-github-hook-installation-target-type": "repository",
+          "accept-encoding": "gzip"
+        },
+        "params": {},
+        "query": {},
+        "body": {
+          "ref": "refs/heads/main",
+          "before": "e07736c3f80c2e37b706b713fb89a8febac389fb",
+          "after": "c64a24ef169a80e12b6723b57175528ce88d1594",
+          "repository": {
+            "id": 1020801025,
+            "node_id": "R_kgDOPNgwAQ",
+            "name": "algolia-chat-me",
+            "full_name": "Tammibriggs/algolia-chat-me",
+            "private": false,
+            "owner": {
+              "name": "Tammibriggs",
+              "email": "godsfirstbriggs@gmail.com",
+              "login": "Tammibriggs",
+              "id": 62633824,
+              "node_id": "MDQ6VXNlcjYyNjMzODI0",
+              "avatar_url": "https://avatars.githubusercontent.com/u/62633824?v=4",
+              "gravatar_id": "",
+              "url": "https://api.github.com/users/Tammibriggs",
+              "html_url": "https://github.com/Tammibriggs",
+              "followers_url": "https://api.github.com/users/Tammibriggs/followers",
+              "following_url": "https://api.github.com/users/Tammibriggs/following{/other_user}",
+              "gists_url": "https://api.github.com/users/Tammibriggs/gists{/gist_id}",
+              "starred_url": "https://api.github.com/users/Tammibriggs/starred{/owner}{/repo}",
+              "subscriptions_url": "https://api.github.com/users/Tammibriggs/subscriptions",
+              "organizations_url": "https://api.github.com/users/Tammibriggs/orgs",
+              "repos_url": "https://api.github.com/users/Tammibriggs/repos",
+              "events_url": "https://api.github.com/users/Tammibriggs/events{/privacy}",
+              "received_events_url": "https://api.github.com/users/Tammibriggs/received_events",
+              "type": "User",
+              "user_view_type": "public",
+              "site_admin": false
+            },
+            "html_url": "https://github.com/Tammibriggs/algolia-chat-me",
+            "description": null,
+            "fork": false,
+            "url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me",
+            "forks_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/forks",
+            "keys_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/keys{/key_id}",
+            "collaborators_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/collaborators{/collaborator}",
+            "teams_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/teams",
+            "hooks_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/hooks",
+            "issue_events_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/issues/events{/number}",
+            "events_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/events",
+            "assignees_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/assignees{/user}",
+            "branches_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/branches{/branch}",
+            "tags_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/tags",
+            "blobs_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/git/blobs{/sha}",
+            "git_tags_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/git/tags{/sha}",
+            "git_refs_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/git/refs{/sha}",
+            "trees_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/git/trees{/sha}",
+            "statuses_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/statuses/{sha}",
+            "languages_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/languages",
+            "stargazers_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/stargazers",
+            "contributors_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/contributors",
+            "subscribers_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/subscribers",
+            "subscription_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/subscription",
+            "commits_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/commits{/sha}",
+            "git_commits_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/git/commits{/sha}",
+            "comments_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/comments{/number}",
+            "issue_comment_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/issues/comments{/number}",
+            "contents_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/contents/{+path}",
+            "compare_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/compare/{base}...{head}",
+            "merges_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/merges",
+            "archive_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/{archive_format}{/ref}",
+            "downloads_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/downloads",
+            "issues_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/issues{/number}",
+            "pulls_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/pulls{/number}",
+            "milestones_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/milestones{/number}",
+            "notifications_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/notifications{?since,all,participating}",
+            "labels_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/labels{/name}",
+            "releases_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/releases{/id}",
+            "deployments_url": "https://api.github.com/repos/Tammibriggs/algolia-chat-me/deployments",
+            "created_at": 1752668123,
+            "updated_at": "2025-07-22T14:32:18Z",
+            "pushed_at": 1753194774,
+            "git_url": "git://github.com/Tammibriggs/algolia-chat-me.git",
+            "ssh_url": "git@github.com:Tammibriggs/algolia-chat-me.git",
+            "clone_url": "https://github.com/Tammibriggs/algolia-chat-me.git",
+            "svn_url": "https://github.com/Tammibriggs/algolia-chat-me",
+            "homepage": null,
+            "size": 118,
+            "stargazers_count": 0,
+            "watchers_count": 0,
+            "language": "TypeScript",
+            "has_issues": true,
+            "has_projects": true,
+            "has_downloads": true,
+            "has_wiki": true,
+            "has_pages": false,
+            "has_discussions": false,
+            "forks_count": 0,
+            "mirror_url": null,
+            "archived": false,
+            "disabled": false,
+            "open_issues_count": 0,
+            "license": null,
+            "allow_forking": true,
+            "is_template": false,
+            "web_commit_signoff_required": false,
+            "topics": [],
+            "visibility": "public",
+            "forks": 0,
+            "open_issues": 0,
+            "watchers": 0,
+            "default_branch": "main",
+            "stargazers": 0,
+            "master_branch": "main"
+          },
+          "pusher": {
+            "name": "Tammibriggs",
+            "email": "godsfirstbriggs@gmail.com"
+          },
+          "sender": {
+            "login": "Tammibriggs",
+            "id": 62633824,
+            "node_id": "MDQ6VXNlcjYyNjMzODI0",
+            "avatar_url": "https://avatars.githubusercontent.com/u/62633824?v=4",
+            "gravatar_id": "",
+            "url": "https://api.github.com/users/Tammibriggs",
+            "html_url": "https://github.com/Tammibriggs",
+            "followers_url": "https://api.github.com/users/Tammibriggs/followers",
+            "following_url": "https://api.github.com/users/Tammibriggs/following{/other_user}",
+            "gists_url": "https://api.github.com/users/Tammibriggs/gists{/gist_id}",
+            "starred_url": "https://api.github.com/users/Tammibriggs/starred{/owner}{/repo}",
+            "subscriptions_url": "https://api.github.com/users/Tammibriggs/subscriptions",
+            "organizations_url": "https://api.github.com/users/Tammibriggs/orgs",
+            "repos_url": "https://api.github.com/users/Tammibriggs/repos",
+            "events_url": "https://api.github.com/users/Tammibriggs/events{/privacy}",
+            "received_events_url": "https://api.github.com/users/Tammibriggs/received_events",
+            "type": "User",
+            "user_view_type": "public",
+            "site_admin": false
+          },
+          "created": false,
+          "deleted": false,
+          "forced": false,
+          "base_ref": null,
+          "compare": "https://github.com/Tammibriggs/algolia-chat-me/compare/e07736c3f80c...c64a24ef169a",
+          "commits": [
+            {
+              "id": "c64a24ef169a80e12b6723b57175528ce88d1594",
+              "tree_id": "06649744eb019f0c99029ac77bdbc17e57b819a0",
+              "distinct": true,
+              "message": "update doc",
+              "timestamp": "2025-07-22T15:32:47+01:00",
+              "url": "https://github.com/Tammibriggs/algolia-chat-me/commit/c64a24ef169a80e12b6723b57175528ce88d1594",
+              "author": {
+                "name": "Tammibriggs",
+                "email": "Godsfirstbriggs@gmail.com",
+                "username": "Tammibriggs"
+              },
+              "committer": {
+                "name": "Tammibriggs",
+                "email": "Godsfirstbriggs@gmail.com",
+                "username": "Tammibriggs"
+              },
+              "added": [],
+              "removed": [],
+              "modified": [
+                "sdk/chatme-sdk.js"
+              ]
+            }
+          ],
+          "head_commit": {
+            "id": "c64a24ef169a80e12b6723b57175528ce88d1594",
+            "tree_id": "06649744eb019f0c99029ac77bdbc17e57b819a0",
+            "distinct": true,
+            "message": "update doc",
+            "timestamp": "2025-07-22T15:32:47+01:00",
+            "url": "https://github.com/Tammibriggs/algolia-chat-me/commit/c64a24ef169a80e12b6723b57175528ce88d1594",
+            "author": {
+              "name": "Tammibriggs",
+              "email": "Godsfirstbriggs@gmail.com",
+              "username": "Tammibriggs"
+            },
+            "committer": {
+              "name": "Tammibriggs",
+              "email": "Godsfirstbriggs@gmail.com",
+              "username": "Tammibriggs"
+            },
+            "added": [],
+            "removed": [],
+            "modified": [
+              "sdk/chatme-sdk.js"
+            ]
+          }
+        },
+        "webhookUrl": "http://localhost:5678/webhook/15ca4146-14b4-4278-8cc8-d194b96ff691",
+        "executionMode": "production"
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d615f9637d9a4210e77a6b5a796c36ae18e3dc83852aefbcd3f60ad94c336232"
+  }
+}
